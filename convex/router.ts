@@ -169,4 +169,83 @@ function json(data: unknown, status: number) {
   });
 }
 
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY || "";
+
+function mapPaystackChannel(
+  paystackChannel: string,
+): "ATM" | "ONLINE" | "POS" | "MOBILE" | "EFT" {
+  const m: Record<string, "ATM" | "ONLINE" | "POS" | "MOBILE" | "EFT"> = {
+    atm: "ATM",
+    web: "ONLINE",
+    online: "ONLINE",
+    pos: "POS",
+    mobile: "MOBILE",
+    ussd: "EFT",
+  };
+  return m[paystackChannel?.toLowerCase()] || "ONLINE";
+}
+
+function mapPaystackType(
+  paystackType: string,
+): "DEBIT" | "CREDIT" | "TRANSFER" | "PAYMENT" {
+  const m: Record<string, "DEBIT" | "CREDIT" | "TRANSFER" | "PAYMENT"> = {
+    debit: "DEBIT",
+    credit: "CREDIT",
+    transfer: "TRANSFER",
+    payment: "PAYMENT",
+  };
+  return m[paystackType?.toLowerCase()] || "PAYMENT";
+}
+
+http.route({
+  path: "/api/webhook/paystack",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const secret =
+      req.headers.get("x-paystack-secret") ||
+      req.headers.get("Authorization")?.slice(7);
+    if (!PAYSTACK_SECRET || secret !== PAYSTACK_SECRET) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "Invalid JSON" }, 400);
+    }
+
+    const event = body.event;
+    if (event === "transaction.success") {
+      const tx = body.data;
+      const txData = {
+        amount: (tx.amount || 0) / 100,
+        type: mapPaystackType(tx.type),
+        channel: mapPaystackChannel(tx.channel),
+        accountNumber: tx.customer?.id || tx.customer?.email || "unknown",
+        accountHolder: tx.customer?.name || tx.customer?.email || "unknown",
+        bankCode: tx.sender_bank_code || tx.bank_code || "632005",
+        merchantCountry: tx.country?.code === "ZA" ? "ZA" : "NG",
+        merchantName: tx.merchant_name || tx.metadata?.merchant_name,
+      };
+
+      const keyInfo = await ctx.runQuery(internal.batchIngest.validateApiKey, {
+        apiKey: PAYSTACK_SECRET.startsWith("fs_live_")
+          ? PAYSTACK_SECRET
+          : "fs_live_paystack_default",
+      });
+
+      if (keyInfo) {
+        await ctx.runMutation(internal.batchIngest.bulkInsert, {
+          organisationId: keyInfo.organisationId,
+          keyId: keyInfo.keyId,
+          transactions: [txData],
+        });
+      }
+    }
+
+    return json({ received: true }, 200);
+  }),
+});
+
 export default http;
