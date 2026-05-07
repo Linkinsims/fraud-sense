@@ -26,14 +26,39 @@ function AuthenticatedApp() {
   const org = useQuery(api.organisations.get);
   const [orgId, setOrgId] = useState<Id<"organisations"> | null>(null);
   const [activePage, setActivePage] = useState("dashboard");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getOrCreate().then(() => {});
+    getOrCreate()
+      .then((res) => {
+        console.log("Org initialized:", res);
+      })
+      .catch((err) => {
+        console.error("Failed to initialize org:", err);
+        setError(err.message);
+      });
   }, []);
 
   useEffect(() => {
-    if (org) setOrgId(org._id);
+    if (org) {
+      setOrgId(org._id);
+    }
   }, [org]);
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-navy-950">
+        <div className="flex flex-col items-center gap-4 max-w-md text-center px-4">
+          <ShieldAlert className="w-12 h-12 text-red-500" />
+          <p className="text-white font-bold">Initialization Error</p>
+          <p className="text-navy-400 text-sm">{error}</p>
+          <p className="text-navy-500 text-xs mt-4">
+            Check your Vercel and Convex environment variables.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!orgId) {
     return (
@@ -41,6 +66,10 @@ function AuthenticatedApp() {
         <div className="flex flex-col items-center gap-4">
           <ShieldAlert className="w-12 h-12 text-accent shield-pulse" />
           <p className="text-navy-400">Initialising FraudSense...</p>
+          <div className="text-navy-600 text-[10px] mt-2 flex flex-col items-center gap-1">
+            <p>Backend URL: {import.meta.env.VITE_CONVEX_URL ? "Set" : "Missing"}</p>
+            <p>Data Status: {org === undefined ? "Loading..." : org === null ? "Not Found" : "Ready"}</p>
+          </div>
         </div>
       </div>
     );
