@@ -7,7 +7,7 @@ const applicationTables = {
     name: v.string(),
     type: v.union(v.literal("BANK"), v.literal("FINTECH"), v.literal("PAYMENT_PROCESSOR")),
     plan: v.union(v.literal("STARTER"), v.literal("GROWTH"), v.literal("ENTERPRISE")),
-    ownerId: v.id("users"),
+    ownerId: v.string(), // Changed from v.id("users") to v.string() for public access
     // Pre-aggregated counters for fast dashboard reads
     statsTotal: v.optional(v.number()),
     statsFlagged: v.optional(v.number()),
