@@ -1,13 +1,12 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { authTables } from "@convex-dev/auth/server";
 
 const applicationTables = {
   organisations: defineTable({
     name: v.string(),
     type: v.union(v.literal("BANK"), v.literal("FINTECH"), v.literal("PAYMENT_PROCESSOR")),
     plan: v.union(v.literal("STARTER"), v.literal("GROWTH"), v.literal("ENTERPRISE")),
-    ownerId: v.string(), // Changed from v.id("users") to v.string() for public access
+    ownerId: v.string(),
     // Pre-aggregated counters for fast dashboard reads
     statsTotal: v.optional(v.number()),
     statsFlagged: v.optional(v.number()),
@@ -87,7 +86,7 @@ const applicationTables = {
     ),
     priority: v.union(v.literal("LOW"), v.literal("MEDIUM"), v.literal("HIGH"), v.literal("CRITICAL")),
     organisationId: v.id("organisations"),
-    assignedToId: v.optional(v.id("users")),
+    assignedToId: v.optional(v.string()), // Changed from v.id("users") to v.string()
     notes: v.optional(v.string()),
     totalAmount: v.number(),
   })
@@ -115,7 +114,4 @@ const applicationTables = {
   }).index("by_org", ["organisationId"]),
 };
 
-export default defineSchema({
-  ...authTables,
-  ...applicationTables,
-});
+export default defineSchema(applicationTables);
