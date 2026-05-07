@@ -29,21 +29,24 @@ function AuthenticatedApp() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Set orgId directly from mutation result to avoid race condition with query
     getOrCreate()
       .then((res) => {
-        console.log("Org initialized:", res);
+        if (res) {
+          setOrgId(res._id);
+        }
       })
       .catch((err) => {
         console.error("Failed to initialize org:", err);
         setError(err.message);
       });
-  }, []);
+  }, [getOrCreate]);
 
   useEffect(() => {
-    if (org) {
+    if (org && !orgId) {
       setOrgId(org._id);
     }
-  }, [org]);
+  }, [org, orgId]);
 
   if (error) {
     return (
@@ -68,7 +71,7 @@ function AuthenticatedApp() {
           <p className="text-navy-400">Initialising FraudSense...</p>
           <div className="text-navy-600 text-[10px] mt-2 flex flex-col items-center gap-1">
             <p>Backend URL: {import.meta.env.VITE_CONVEX_URL ? "Set" : "Missing"}</p>
-            <p>Data Status: {org === undefined ? "Loading..." : org === null ? "Not Found" : "Ready"}</p>
+            <p>Data Status: {org === undefined ? "Connecting..." : org === null ? "Creating Org..." : "Ready"}</p>
           </div>
         </div>
       </div>
