@@ -1,11 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 
 export const list = query({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return [];
     return await ctx.db
       .query("rules")
@@ -27,7 +26,7 @@ export const create = mutation({
     scoreBoost: v.number(),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     return await ctx.db.insert("rules", { ...args, isActive: true });
   },
@@ -36,7 +35,7 @@ export const create = mutation({
 export const toggle = mutation({
   args: { ruleId: v.id("rules"), isActive: v.boolean() },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.patch(args.ruleId, { isActive: args.isActive });
   },
@@ -45,7 +44,7 @@ export const toggle = mutation({
 export const remove = mutation({
   args: { ruleId: v.id("rules") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.delete(args.ruleId);
   },

@@ -1,12 +1,13 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
+
+// A constant ID to represent the public user in this shared environment
+const PUBLIC_USER_ID = "public_user";
 
 export const getOrCreate = mutation({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+    const userId = PUBLIC_USER_ID;
 
     const existing = await ctx.db
       .query("organisations")
@@ -71,8 +72,7 @@ export const getOrCreate = mutation({
 export const get = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) return null;
+    const userId = PUBLIC_USER_ID;
     return await ctx.db
       .query("organisations")
       .withIndex("by_owner", (q) => q.eq("ownerId", userId))
@@ -86,8 +86,7 @@ export const update = mutation({
     type: v.union(v.literal("BANK"), v.literal("FINTECH"), v.literal("PAYMENT_PROCESSOR")),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
+    const userId = PUBLIC_USER_ID;
     const org = await ctx.db
       .query("organisations")
       .withIndex("by_owner", (q) => q.eq("ownerId", userId))
@@ -96,4 +95,3 @@ export const update = mutation({
     await ctx.db.patch(org._id, { name: args.name, type: args.type });
   },
 });
-

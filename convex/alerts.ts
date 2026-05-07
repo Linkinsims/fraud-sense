@@ -1,6 +1,5 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 
 export const list = query({
   args: {
@@ -8,7 +7,7 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return [];
     return await ctx.db
       .query("alerts")
@@ -21,7 +20,7 @@ export const list = query({
 export const getUnreadCount = query({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return 0;
     const alerts = await ctx.db
       .query("alerts")
@@ -34,7 +33,7 @@ export const getUnreadCount = query({
 export const markRead = mutation({
   args: { alertId: v.id("alerts") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.patch(args.alertId, { isRead: true });
   },
@@ -43,7 +42,7 @@ export const markRead = mutation({
 export const markResolved = mutation({
   args: { alertId: v.id("alerts") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.patch(args.alertId, { isRead: true, isResolved: true });
   },
@@ -52,7 +51,7 @@ export const markResolved = mutation({
 export const markAllRead = mutation({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     const unread = await ctx.db
       .query("alerts")

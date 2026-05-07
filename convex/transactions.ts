@@ -1,6 +1,5 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { Id } from "./_generated/dataModel";
 
 function scoreTransaction(
@@ -64,7 +63,7 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return [];
     return await ctx.db
       .query("transactions")
@@ -77,7 +76,7 @@ export const list = query({
 export const getStats = query({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return null;
 
     const org = await ctx.db.get(args.organisationId);
@@ -227,7 +226,7 @@ export const markReviewed = mutation({
     isFraud: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.patch(args.transactionId, {
       isReviewed: true,

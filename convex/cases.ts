@@ -1,11 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 
 export const list = query({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return [];
     return await ctx.db
       .query("cases")
@@ -24,7 +23,7 @@ export const create = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
 
     const existing = await ctx.db
@@ -69,7 +68,7 @@ export const updateStatus = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.patch(args.caseId, { status: args.status });
   },
@@ -78,7 +77,7 @@ export const updateStatus = mutation({
 export const addNote = mutation({
   args: { caseId: v.id("cases"), notes: v.string() },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     await ctx.db.patch(args.caseId, { notes: args.notes });
   },

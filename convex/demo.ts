@@ -1,6 +1,5 @@
 import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 
@@ -97,7 +96,7 @@ function generateTxData(scenario: Scenario) {
 export const getState = query({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) return null;
     return await ctx.db
       .query("demoState")
@@ -109,7 +108,7 @@ export const getState = query({
 export const start = mutation({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
 
     const existing = await ctx.db
@@ -137,7 +136,7 @@ export const start = mutation({
 export const stop = mutation({
   args: { organisationId: v.id("organisations") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = "public_user";
     if (!userId) throw new Error("Not authenticated");
     const state = await ctx.db
       .query("demoState")
