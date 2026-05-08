@@ -4,17 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "npm-run-all --parallel dev:frontend dev:backend",
-    "dev:frontend": "vite --open",
-    "dev:backend": "convex dev",
+    "dev": "vite --open",
     "build": "vite build",
-    "lint": "tsc -p convex -noEmit --pretty false && tsc -p . -noEmit --pretty false && convex dev --once && vite build",
+    "lint": "vite build",
     "batch:send": "node --import tsx scripts/batch-send.mts"
   },
   "dependencies": {
-    "@convex-dev/auth": "^0.0.80",
+    "@supabase/supabase-js": "^2.49.4",
     "clsx": "^2.1.1",
-    "convex": "^1.31.2",
     "lucide-react": "^1.8.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
