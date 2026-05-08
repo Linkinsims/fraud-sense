@@ -1,8 +1,6 @@
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../convex/_generated/api";
-import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
-import { Id } from "../convex/_generated/dataModel";
+import { Toaster } from "sonner";
+import { supabase } from "./lib/supabase";
 import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
 import Alerts from "./pages/Alerts";
@@ -13,66 +11,88 @@ import Sidebar from "./components/Sidebar";
 import { ShieldAlert } from "lucide-react";
 
 export default function App() {
-  return (
-    <div className="min-h-screen bg-navy-950 text-navy-100">
-      <AuthenticatedApp />
-      <Toaster theme="dark" position="top-right" />
-    </div>
-  );
-}
-
-function AuthenticatedApp() {
-  const getOrCreate = useMutation(api.organisations.getOrCreate);
-  const org = useQuery(api.organisations.get);
-  const [orgId, setOrgId] = useState<Id<"organisations"> | null>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
   const [activePage, setActivePage] = useState("dashboard");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set orgId directly from mutation result to avoid race condition with query
-    getOrCreate()
-      .then((res) => {
-        if (res) {
-          setOrgId(res._id);
+    async function initApp() {
+      try {
+        const PUBLIC_USER_ID = "public_user";
+        
+        // Try to find existing org
+        const { data: existingOrg, error: fetchError } = await supabase
+          .from('organisations')
+          .select('id')
+          .eq('owner_id', PUBLIC_USER_ID)
+          .single();
+
+        if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+          throw fetchError;
         }
-      })
-      .catch((err) => {
-        console.error("Failed to initialize org:", err);
-        setError(err.message);
-      });
-  }, [getOrCreate]);
 
-  useEffect(() => {
-    if (org && !orgId) {
-      setOrgId(org._id);
+        if (existingOrg) {
+          setOrgId(existingOrg.id);
+        } else {
+          // Create new org if not found
+          const { data: newOrg, error: createError } = await supabase
+            .from('organisations')
+            .insert({
+              name: "My Organisation",
+              type: "FINTECH",
+              plan: "STARTER",
+              owner_id: PUBLIC_USER_ID
+            })
+            .select()
+            .single();
+
+          if (createError) throw createError;
+          
+          // Seed default rules
+          const defaultRules = [
+            { name: "High Amount Alert", description: "Flag transactions over R50,000", field: "amount", operator: "gt", value: 50000, action: "ALERT", severity: "HIGH", score_boost: 20, organisation_id: newOrg.id },
+            { name: "Very High Amount Block", description: "Block transactions over R100,000", field: "amount", operator: "gt", value: 100000, action: "BLOCK", severity: "CRITICAL", score_boost: 40, organisation_id: newOrg.id },
+            { name: "Foreign Transaction Flag", description: "Flag non-ZA transactions", field: "amount", operator: "gt", value: 5000, action: "FLAG", severity: "MEDIUM", score_boost: 15, organisation_id: newOrg.id }
+          ];
+
+          const { error: seedError } = await supabase.from('rules').insert(defaultRules);
+          if (seedError) console.error("Rule seeding failed:", seedError);
+
+          setOrgId(newOrg.id);
+        }
+      } catch (err: any) {
+        console.error("Initialization error:", err);
+        setError(err.message || "Failed to connect to Supabase");
+      } finally {
+        setLoading(false);
+      }
     }
-  }, [org, orgId]);
+
+    initApp();
+  }, []);
 
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-navy-950">
         <div className="flex flex-col items-center gap-4 max-w-md text-center px-4">
           <ShieldAlert className="w-12 h-12 text-red-500" />
-          <p className="text-white font-bold">Initialization Error</p>
+          <p className="text-white font-bold">Supabase Connection Error</p>
           <p className="text-navy-400 text-sm">{error}</p>
           <p className="text-navy-500 text-xs mt-4">
-            Check your Vercel and Convex environment variables.
+            Check your Vercel Environment Variables for VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
           </p>
         </div>
       </div>
     );
   }
 
-  if (!orgId) {
+  if (loading || !orgId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-navy-950">
         <div className="flex flex-col items-center gap-4">
           <ShieldAlert className="w-12 h-12 text-accent shield-pulse" />
-          <p className="text-navy-400">Initialising FraudSense...</p>
-          <div className="text-navy-600 text-[10px] mt-2 flex flex-col items-center gap-1">
-            <p>Backend URL: {import.meta.env.VITE_CONVEX_URL ? "Set" : "Missing"}</p>
-            <p>Data Status: {org === undefined ? "Connecting..." : org === null ? "Creating Org..." : "Ready"}</p>
-          </div>
+          <p className="text-navy-400">Connecting to Supabase...</p>
         </div>
       </div>
     );
@@ -89,6 +109,7 @@ function AuthenticatedApp() {
         {activePage === "rules" && <Rules orgId={orgId} />}
         {activePage === "apikeys" && <ApiKeys orgId={orgId} />}
       </main>
+      <Toaster theme="dark" position="top-right" />
     </div>
   );
 }
