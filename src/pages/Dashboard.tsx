@@ -1,18 +1,16 @@
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { supabase } from "../lib/supabase";
 import StatCard from "../components/StatCard";
 import RiskBadge from "../components/RiskBadge";
+import { useEffect, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import {
-  ArrowLeftRight, AlertTriangle, ShieldAlert, FolderOpen,
-  Play, Square, Zap,
+  ArrowLeftRight, AlertTriangle, ShieldAlert, FolderOpen, Zap,
 } from "lucide-react";
 
 interface Props {
-  orgId: Id<"organisations">;
+  orgId: string;
 }
 
 const RISK_COLORS = {
@@ -26,7 +24,8 @@ function formatZAR(amount: number) {
   return new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR", maximumFractionDigits: 0 }).format(amount);
 }
 
-function timeAgo(ts: number) {
+function timeAgo(dateString: string) {
+  const ts = new Date(dateString).getTime();
   const diff = Date.now() - ts;
   if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
@@ -34,19 +33,81 @@ function timeAgo(ts: number) {
 }
 
 export default function Dashboard({ orgId }: Props) {
-  const stats = useQuery(api.transactions.getStats, { organisationId: orgId });
-  const recentTx = useQuery(api.transactions.list, { organisationId: orgId, limit: 15 });
-  const recentAlerts = useQuery(api.alerts.list, { organisationId: orgId, limit: 5 });
-  const cases = useQuery(api.cases.list, { organisationId: orgId });
-  const demoState = useQuery(api.demo.getState, { organisationId: orgId });
-  const startDemo = useMutation(api.demo.start);
-  const stopDemo = useMutation(api.demo.stop);
+  const [stats, setStats] = useState<any>(null);
+  const [recentTx, setRecentTx] = useState<any[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<any[]>([]);
+  const [casesCount, setCasesCount] = useState(0);
+  const [loading, setLoading] = useState(true);
 
-  const riskChartData = stats
-    ? Object.entries(stats.riskDist).map(([level, count]) => ({ level, count }))
-    : [];
+  useEffect(() => {
+    async function fetchDashboardData() {
+      // Fetch stats from organisations table
+      const { data: orgData } = await supabase
+        .from('organisations')
+        .select('*')
+        .eq('id', orgId)
+        .single();
+      
+      setStats(orgData);
 
-  const openCases = cases?.filter((c) => c.status === "OPEN" || c.status === "INVESTIGATING").length ?? 0;
+      // Fetch recent transactions
+      const { data: txData } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('organisation_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(15);
+      
+      setRecentTx(txData || []);
+
+      // Fetch recent alerts
+      const { data: alertsData } = await supabase
+        .from('alerts')
+        .select('*')
+        .eq('organisation_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      setRecentAlerts(alertsData || []);
+
+      // Fetch open cases count
+      const { count } = await supabase
+        .from('cases')
+        .select('*', { count: 'exact', head: true })
+        .eq('organisation_id', orgId)
+        .in('status', ['OPEN', 'INVESTIGATING']);
+      
+      setCasesCount(count || 0);
+      setLoading(false);
+    }
+
+    fetchDashboardData();
+
+    // Set up realtime subscriptions
+    const txSubscription = supabase
+      .channel('dashboard_tx')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `organisation_id=eq.${orgId}` }, 
+        (payload) => setRecentTx(prev => [payload.new, ...prev].slice(0, 15))
+      ).subscribe();
+
+    const alertSubscription = supabase
+      .channel('dashboard_alerts')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'alerts', filter: `organisation_id=eq.${orgId}` }, 
+        (payload) => setRecentAlerts(prev => [payload.new, ...prev].slice(0, 5))
+      ).subscribe();
+
+    return () => {
+      txSubscription.unsubscribe();
+      alertSubscription.unsubscribe();
+    };
+  }, [orgId]);
+
+  const riskChartData = stats ? [
+    { level: 'LOW', count: stats.stats_low || 0 },
+    { level: 'MEDIUM', count: stats.stats_medium || 0 },
+    { level: 'HIGH', count: stats.stats_high || 0 },
+    { level: 'CRITICAL', count: stats.stats_critical_count || 0 },
+  ] : [];
 
   return (
     <div className="p-6 space-y-6">
@@ -56,56 +117,34 @@ export default function Dashboard({ orgId }: Props) {
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-navy-400 text-sm mt-0.5">Real-time fraud monitoring overview</p>
         </div>
-        <div className="flex items-center gap-3">
-          {demoState?.isRunning && (
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-accent/10 border border-accent/20 rounded text-accent text-sm">
-              <span className="w-2 h-2 rounded-full bg-accent live-dot" />
-              Demo Live — {demoState.transactionCount} txns
-            </div>
-          )}
-          <button
-            onClick={() => demoState?.isRunning ? stopDemo({ organisationId: orgId }) : startDemo({ organisationId: orgId })}
-            className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-colors ${
-              demoState?.isRunning
-                ? "bg-navy-700 hover:bg-navy-600 text-navy-200"
-                : "bg-accent hover:bg-accent-hover text-white"
-            }`}
-          >
-            {demoState?.isRunning ? (
-              <><Square className="w-4 h-4" /> Stop Demo</>
-            ) : (
-              <><Play className="w-4 h-4" /> Start Demo</>
-            )}
-          </button>
-        </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Transactions Today"
-          value={stats?.totalToday ?? 0}
+          value={stats?.stats_today_total ?? 0}
           subtitle="All channels"
           icon={ArrowLeftRight}
           color="blue"
         />
         <StatCard
           title="Flagged Transactions"
-          value={stats?.flaggedTotal ?? 0}
+          value={stats?.stats_flagged ?? 0}
           subtitle="HIGH + CRITICAL"
           icon={AlertTriangle}
           color="amber"
         />
         <StatCard
           title="Critical Alerts"
-          value={stats?.criticalTotal ?? 0}
+          value={stats?.stats_critical_count ?? 0}
           subtitle="Requires immediate action"
           icon={ShieldAlert}
           color="red"
         />
         <StatCard
           title="Open Cases"
-          value={openCases}
+          value={casesCount}
           subtitle="Under investigation"
           icon={FolderOpen}
           color="green"
@@ -120,42 +159,35 @@ export default function Dashboard({ orgId }: Props) {
               <Zap className="w-4 h-4 text-warning" />
               <h2 className="text-white font-semibold">Live Transaction Feed</h2>
             </div>
-            {demoState?.isRunning && (
-              <div className="flex items-center gap-1.5 text-xs text-safe">
-                <span className="w-1.5 h-1.5 rounded-full bg-safe live-dot" />
-                LIVE
-              </div>
-            )}
           </div>
           <div className="divide-y divide-navy-800 max-h-96 overflow-y-auto">
-            {recentTx?.length === 0 && (
+            {loading ? (
+              <div className="p-8 text-center text-navy-500">Loading live feed...</div>
+            ) : recentTx?.length === 0 && (
               <div className="p-8 text-center text-navy-500">
                 <ArrowLeftRight className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p>No transactions yet. Start the demo to see live data.</p>
+                <p>No transactions yet.</p>
               </div>
             )}
             {recentTx?.map((tx) => (
-              <div key={tx._id} className="flex items-center gap-3 px-4 py-3 hover:bg-navy-800/50 transition-colors">
+              <div key={tx.id} className="flex items-center gap-3 px-4 py-3 hover:bg-navy-800/50 transition-colors">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-white text-sm font-medium truncate">
-                      {tx.merchantName ?? tx.accountHolder}
+                      {tx.merchant_name ?? tx.account_holder}
                     </span>
-                    {tx.isDemo && (
-                      <span className="text-xs px-1.5 py-0.5 bg-navy-700 text-navy-400 rounded">DEMO</span>
-                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-navy-500 text-xs">{tx.accountNumber}</span>
+                    <span className="text-navy-500 text-xs">{tx.account_number}</span>
                     <span className="text-navy-600 text-xs">·</span>
                     <span className="text-navy-500 text-xs">{tx.channel}</span>
                     <span className="text-navy-600 text-xs">·</span>
-                    <span className="text-navy-500 text-xs">{timeAgo(tx._creationTime)}</span>
+                    <span className="text-navy-500 text-xs">{timeAgo(tx.created_at)}</span>
                   </div>
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-white text-sm font-semibold">{formatZAR(tx.amount)}</p>
-                  <RiskBadge level={tx.riskLevel} size="sm" />
+                  <RiskBadge level={tx.risk_level} size="sm" />
                 </div>
               </div>
             ))}
@@ -188,11 +220,13 @@ export default function Dashboard({ orgId }: Props) {
           <div className="bg-navy-900 border border-navy-800 rounded-container p-4">
             <h2 className="text-white font-semibold mb-3">Recent Alerts</h2>
             <div className="space-y-2">
-              {recentAlerts?.length === 0 && (
+              {loading ? (
+                <p className="text-navy-500 text-sm text-center py-4">Loading alerts...</p>
+              ) : recentAlerts?.length === 0 && (
                 <p className="text-navy-500 text-sm text-center py-4">No alerts yet</p>
               )}
               {recentAlerts?.map((alert) => (
-                <div key={alert._id} className={`p-2.5 rounded border text-xs ${
+                <div key={alert.id} className={`p-2.5 rounded border text-xs ${
                   alert.severity === "CRITICAL"
                     ? "bg-accent/5 border-accent/20"
                     : alert.severity === "HIGH"
@@ -204,7 +238,7 @@ export default function Dashboard({ orgId }: Props) {
                       alert.severity === "CRITICAL" ? "text-accent" :
                       alert.severity === "HIGH" ? "text-orange-400" : "text-warning"
                     }`}>{alert.title}</span>
-                    {!alert.isRead && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />}
+                    {!alert.is_read && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />}
                   </div>
                   <p className="text-navy-400 mt-0.5 truncate">{alert.description}</p>
                 </div>
@@ -219,12 +253,12 @@ export default function Dashboard({ orgId }: Props) {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-navy-400 text-sm">Total Transaction Volume Today</p>
-            <p className="text-3xl font-bold text-white mt-1">{formatZAR(stats?.totalVolume ?? 0)}</p>
+            <p className="text-3xl font-bold text-white mt-1">{formatZAR(stats?.stats_today_volume ?? 0)}</p>
           </div>
           <div className="text-right">
             <p className="text-navy-400 text-sm">Protected from fraud</p>
             <p className="text-2xl font-bold text-safe mt-1">
-              {formatZAR((stats?.flaggedTotal ?? 0) * 12500)}
+              {formatZAR((stats?.stats_flagged ?? 0) * 12500)}
             </p>
           </div>
         </div>
@@ -232,4 +266,3 @@ export default function Dashboard({ orgId }: Props) {
     </div>
   );
 }
-

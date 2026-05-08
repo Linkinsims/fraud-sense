@@ -1,11 +1,9 @@
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { supabase } from "../lib/supabase";
 import { Bell, CheckCheck, Check, ShieldAlert, AlertTriangle, Info } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Props {
-  orgId: Id<"organisations">;
+  orgId: string;
 }
 
 const SEVERITY_CONFIG = {
@@ -15,7 +13,8 @@ const SEVERITY_CONFIG = {
   LOW: { bg: "bg-blue-500/10", border: "border-blue-500/30", text: "text-blue-400", icon: Info },
 };
 
-function timeAgo(ts: number) {
+function timeAgo(dateString: string) {
+  const ts = new Date(dateString).getTime();
   const diff = Date.now() - ts;
   if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
@@ -24,20 +23,71 @@ function timeAgo(ts: number) {
 }
 
 export default function Alerts({ orgId }: Props) {
-  const alerts = useQuery(api.alerts.list, { organisationId: orgId, limit: 200 });
-  const markRead = useMutation(api.alerts.markRead);
-  const markResolved = useMutation(api.alerts.markResolved);
-  const markAllRead = useMutation(api.alerts.markAllRead);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>("ALL");
   const [showResolved, setShowResolved] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchAlerts() {
+      const { data, error } = await supabase
+        .from('alerts')
+        .select('*')
+        .eq('organisation_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (error) console.error("Error fetching alerts:", error);
+      else setAlerts(data || []);
+      setLoading(false);
+    }
+
+    fetchAlerts();
+
+    // Set up realtime subscription
+    const subscription = supabase
+      .channel('alerts_changes')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'alerts',
+        filter: `organisation_id=eq.${orgId}`
+      }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          setAlerts(prev => [payload.new, ...prev].slice(0, 200));
+        } else if (payload.eventType === 'UPDATE') {
+          setAlerts(prev => prev.map(a => a.id === payload.new.id ? payload.new : a));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [orgId]);
+
+  const markRead = async (id: string) => {
+    const { error } = await supabase.from('alerts').update({ is_read: true }).eq('id', id);
+    if (error) console.error("Error marking read:", error);
+  };
+
+  const markResolved = async (id: string) => {
+    const { error } = await supabase.from('alerts').update({ is_read: true, is_resolved: true }).eq('id', id);
+    if (error) console.error("Error marking resolved:", error);
+  };
+
+  const markAllRead = async () => {
+    const { error } = await supabase.from('alerts').update({ is_read: true }).eq('organisation_id', orgId).eq('is_read', false);
+    if (error) console.error("Error marking all read:", error);
+  };
 
   const filtered = alerts?.filter((a) => {
     const matchSeverity = filter === "ALL" || a.severity === filter;
-    const matchResolved = showResolved ? true : !a.isResolved;
+    const matchResolved = showResolved ? true : !a.is_resolved;
     return matchSeverity && matchResolved;
   });
 
-  const unread = alerts?.filter((a) => !a.isRead).length ?? 0;
+  const unreadCount = alerts?.filter((a) => !a.is_read).length ?? 0;
 
   return (
     <div className="p-6 space-y-4">
@@ -45,7 +95,7 @@ export default function Alerts({ orgId }: Props) {
         <div>
           <h1 className="text-2xl font-bold text-white">Alert Centre</h1>
           <p className="text-navy-400 text-sm mt-0.5">
-            {unread > 0 ? `${unread} unread alerts` : "All alerts read"}
+            {loading ? "Loading..." : unreadCount > 0 ? `${unreadCount} unread alerts` : "All alerts read"}
           </p>
         </div>
         <div className="flex gap-2">
@@ -57,9 +107,9 @@ export default function Alerts({ orgId }: Props) {
           >
             {showResolved ? "Hide Resolved" : "Show Resolved"}
           </button>
-          {unread > 0 && (
+          {unreadCount > 0 && (
             <button
-              onClick={() => markAllRead({ organisationId: orgId })}
+              onClick={markAllRead}
               className="flex items-center gap-1.5 px-3 py-2 bg-navy-800 border border-navy-700 text-navy-300 text-xs rounded hover:bg-navy-700 transition-colors"
             >
               <CheckCheck className="w-3.5 h-3.5" /> Mark All Read
@@ -94,21 +144,23 @@ export default function Alerts({ orgId }: Props) {
 
       {/* Alerts list */}
       <div className="space-y-2">
-        {filtered?.length === 0 && (
+        {loading ? (
+          <div className="text-center py-16 text-navy-500">Loading alerts...</div>
+        ) : filtered?.length === 0 && (
           <div className="text-center py-16 text-navy-500">
             <Bell className="w-10 h-10 mx-auto mb-3 opacity-30" />
             <p>No alerts found</p>
           </div>
         )}
         {filtered?.map((alert) => {
-          const cfg = SEVERITY_CONFIG[alert.severity];
+          const cfg = SEVERITY_CONFIG[alert.severity as keyof typeof SEVERITY_CONFIG] || SEVERITY_CONFIG.LOW;
           const Icon = cfg.icon;
           return (
             <div
-              key={alert._id}
+              key={alert.id}
               className={`flex items-start gap-4 p-4 rounded-container border transition-all ${cfg.bg} ${cfg.border} ${
-                !alert.isRead ? "opacity-100" : "opacity-60"
-              } ${alert.isResolved ? "opacity-40" : ""}`}
+                !alert.is_read ? "opacity-100" : "opacity-60"
+              } ${alert.is_resolved ? "opacity-40" : ""}`}
             >
               <div className={`p-2 rounded ${cfg.bg} shrink-0`}>
                 <Icon className={`w-4 h-4 ${cfg.text}`} />
@@ -119,31 +171,31 @@ export default function Alerts({ orgId }: Props) {
                   <span className={`text-xs px-1.5 py-0.5 rounded border ${cfg.bg} ${cfg.border} ${cfg.text}`}>
                     {alert.severity}
                   </span>
-                  {!alert.isRead && (
+                  {!alert.is_read && (
                     <span className="w-2 h-2 rounded-full bg-accent" />
                   )}
-                  {alert.isResolved && (
+                  {alert.is_resolved && (
                     <span className="text-xs px-1.5 py-0.5 bg-safe/10 border border-safe/20 text-safe rounded">
                       RESOLVED
                     </span>
                   )}
                 </div>
                 <p className="text-navy-300 text-sm mt-1">{alert.description}</p>
-                <p className="text-navy-500 text-xs mt-1">{timeAgo(alert._creationTime)}</p>
+                <p className="text-navy-500 text-xs mt-1">{timeAgo(alert.created_at)}</p>
               </div>
               <div className="flex gap-2 shrink-0">
-                {!alert.isRead && (
+                {!alert.is_read && (
                   <button
-                    onClick={() => markRead({ alertId: alert._id })}
+                    onClick={() => markRead(alert.id)}
                     className="p-1.5 rounded bg-navy-700 hover:bg-navy-600 text-navy-400 hover:text-navy-200 transition-colors"
                     title="Mark as read"
                   >
                     <Check className="w-3.5 h-3.5" />
                   </button>
                 )}
-                {!alert.isResolved && (
+                {!alert.is_resolved && (
                   <button
-                    onClick={() => markResolved({ alertId: alert._id })}
+                    onClick={() => markResolved(alert.id)}
                     className="p-1.5 rounded bg-safe/10 hover:bg-safe/20 text-safe transition-colors"
                     title="Mark as resolved"
                   >
@@ -158,4 +210,3 @@ export default function Alerts({ orgId }: Props) {
     </div>
   );
 }
-

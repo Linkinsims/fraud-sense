@@ -1,11 +1,9 @@
-import { useQuery, useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
-import { useState } from "react";
+import { supabase } from "../lib/supabase";
+import { useEffect, useState } from "react";
 import { Settings2, Plus, Trash2, ToggleLeft, ToggleRight, X } from "lucide-react";
 
 interface Props {
-  orgId: Id<"organisations">;
+  orgId: string;
 }
 
 const ACTION_CONFIG = {
@@ -35,11 +33,8 @@ const OPERATOR_OPTIONS = [
 ];
 
 export default function Rules({ orgId }: Props) {
-  const rules = useQuery(api.rules.list, { organisationId: orgId });
-  const createRule = useMutation(api.rules.create);
-  const toggleRule = useMutation(api.rules.toggle);
-  const removeRule = useMutation(api.rules.remove);
-
+  const [rules, setRules] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
     name: "",
@@ -49,24 +44,67 @@ export default function Rules({ orgId }: Props) {
     value: 50000,
     action: "ALERT" as "ALERT" | "BLOCK" | "FLAG" | "REVIEW",
     severity: "HIGH" as "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-    scoreBoost: 20,
+    score_boost: 20,
   });
 
-  async function handleCreate() {
-    if (!form.name.trim()) return;
-    await createRule({ organisationId: orgId, ...form });
-    setShowCreate(false);
-    setForm({ name: "", description: "", field: "amount", operator: "gt", value: 50000, action: "ALERT", severity: "HIGH", scoreBoost: 20 });
-  }
+  useEffect(() => {
+    async function fetchRules() {
+      const { data, error } = await supabase
+        .from('rules')
+        .select('*')
+        .eq('organisation_id', orgId)
+        .order('created_at', { ascending: false });
 
-  const active = rules?.filter((r) => r.isActive).length ?? 0;
+      if (error) console.error("Error fetching rules:", error);
+      else setRules(data || []);
+      setLoading(false);
+    }
+
+    fetchRules();
+
+    const subscription = supabase
+      .channel('rules_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rules', filter: `organisation_id=eq.${orgId}` }, 
+        (payload) => {
+          if (payload.eventType === 'INSERT') setRules(prev => [payload.new, ...prev]);
+          else if (payload.eventType === 'UPDATE') setRules(prev => prev.map(r => r.id === payload.new.id ? payload.new : r));
+          else if (payload.eventType === 'DELETE') setRules(prev => prev.filter(r => r.id !== payload.old.id));
+        }
+      ).subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [orgId]);
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) return;
+    const { error } = await supabase.from('rules').insert({ organisation_id: orgId, ...form, is_active: true });
+    if (error) console.error("Error creating rule:", error);
+    else {
+      setShowCreate(false);
+      setForm({ name: "", description: "", field: "amount", operator: "gt", value: 50000, action: "ALERT", severity: "HIGH", score_boost: 20 });
+    }
+  };
+
+  const toggleRule = async (ruleId: string, isActive: boolean) => {
+    const { error } = await supabase.from('rules').update({ is_active: isActive }).eq('id', ruleId);
+    if (error) console.error("Error toggling rule:", error);
+  };
+
+  const removeRule = async (ruleId: string) => {
+    const { error } = await supabase.from('rules').delete().eq('id', ruleId);
+    if (error) console.error("Error removing rule:", error);
+  };
+
+  const activeCount = rules?.filter((r) => r.is_active).length ?? 0;
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Detection Rules</h1>
-          <p className="text-navy-400 text-sm mt-0.5">{active} active / {rules?.length ?? 0} total rules</p>
+          <p className="text-navy-400 text-sm mt-0.5">{loading ? "Loading..." : `${activeCount} active / ${rules?.length ?? 0} total rules`}</p>
         </div>
         <button
           onClick={() => setShowCreate(true)}
@@ -78,19 +116,21 @@ export default function Rules({ orgId }: Props) {
 
       {/* Rules list */}
       <div className="space-y-2">
-        {rules?.length === 0 && (
+        {loading ? (
+          <div className="text-center py-16 text-navy-500">Loading rules...</div>
+        ) : rules?.length === 0 && (
           <div className="text-center py-16 text-navy-500">
             <Settings2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
             <p>No rules configured yet.</p>
           </div>
         )}
         {rules?.map((rule) => {
-          const ac = ACTION_CONFIG[rule.action];
+          const ac = ACTION_CONFIG[rule.action as keyof typeof ACTION_CONFIG] || ACTION_CONFIG.ALERT;
           return (
             <div
-              key={rule._id}
+              key={rule.id}
               className={`flex items-center gap-4 p-4 rounded-container border transition-all bg-navy-900 ${
-                rule.isActive ? "border-navy-800" : "border-navy-800 opacity-50"
+                rule.is_active ? "border-navy-800" : "border-navy-800 opacity-50"
               }`}
             >
               <div className="flex-1 min-w-0">
@@ -99,10 +139,10 @@ export default function Rules({ orgId }: Props) {
                   <span className={`text-xs px-1.5 py-0.5 rounded border ${ac.bg} ${ac.border} ${ac.text}`}>
                     {rule.action}
                   </span>
-                  <span className={`text-xs font-semibold ${SEVERITY_TEXT[rule.severity]}`}>
+                  <span className={`text-xs font-semibold ${SEVERITY_TEXT[rule.severity as keyof typeof SEVERITY_TEXT]}`}>
                     {rule.severity}
                   </span>
-                  {!rule.isActive && (
+                  {!rule.is_active && (
                     <span className="text-xs px-1.5 py-0.5 bg-navy-700 text-navy-500 rounded border border-navy-600">
                       DISABLED
                     </span>
@@ -110,22 +150,22 @@ export default function Rules({ orgId }: Props) {
                 </div>
                 <p className="text-navy-400 text-xs mt-1">{rule.description}</p>
                 <p className="text-navy-500 text-xs mt-0.5 font-mono">
-                  {rule.field} {rule.operator} {rule.value.toLocaleString()} → +{rule.scoreBoost} risk score
+                  {rule.field} {rule.operator} {rule.value.toLocaleString()} → +{rule.score_boost} risk score
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button
-                  onClick={() => toggleRule({ ruleId: rule._id, isActive: !rule.isActive })}
+                  onClick={() => toggleRule(rule.id, !rule.is_active)}
                   className="text-navy-400 hover:text-navy-200 transition-colors"
-                  title={rule.isActive ? "Disable rule" : "Enable rule"}
+                  title={rule.is_active ? "Disable rule" : "Enable rule"}
                 >
-                  {rule.isActive
+                  {rule.is_active
                     ? <ToggleRight className="w-6 h-6 text-safe" />
                     : <ToggleLeft className="w-6 h-6" />
                   }
                 </button>
                 <button
-                  onClick={() => removeRule({ ruleId: rule._id })}
+                  onClick={() => removeRule(rule.id)}
                   className="p-1.5 rounded hover:bg-accent/10 text-navy-500 hover:text-accent transition-colors"
                   title="Delete rule"
                 >
@@ -199,8 +239,8 @@ export default function Rules({ orgId }: Props) {
                   <label className="text-navy-400 text-xs mb-1 block">Score Boost</label>
                   <input
                     type="number"
-                    value={form.scoreBoost}
-                    onChange={(e) => setForm({ ...form, scoreBoost: Number(e.target.value) })}
+                    value={form.score_boost}
+                    onChange={(e) => setForm({ ...form, score_boost: Number(e.target.value) })}
                     className="w-full px-3 py-2 bg-navy-800 border border-navy-700 rounded text-sm text-navy-200 focus:outline-none focus:border-blue-500"
                   />
                 </div>

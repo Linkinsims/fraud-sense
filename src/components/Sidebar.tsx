@@ -1,7 +1,5 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
-import { SignOutButton } from "../SignOutButton";
+import { supabase } from "../lib/supabase";
+import { useEffect, useState } from "react";
 import {
   ShieldAlert,
   LayoutDashboard,
@@ -10,13 +8,12 @@ import {
   FolderOpen,
   Settings2,
   Key,
-  LogOut,
 } from "lucide-react";
 
 interface SidebarProps {
   activePage: string;
   onNavigate: (page: string) => void;
-  orgId: Id<"organisations">;
+  orgId: string;
 }
 
 const navItems = [
@@ -29,8 +26,55 @@ const navItems = [
 ];
 
 export default function Sidebar({ activePage, onNavigate, orgId }: SidebarProps) {
-  const unreadCount = useQuery(api.alerts.getUnreadCount, { organisationId: orgId });
-  const org = useQuery(api.organisations.get);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [org, setOrg] = useState<any>(null);
+
+  useEffect(() => {
+    async function fetchData() {
+      // Fetch unread alerts count
+      const { count } = await supabase
+        .from('alerts')
+        .select('*', { count: 'exact', head: true })
+        .eq('organisation_id', orgId)
+        .eq('is_read', false);
+      
+      setUnreadCount(count || 0);
+
+      // Fetch organisation info
+      const { data } = await supabase
+        .from('organisations')
+        .select('*')
+        .eq('id', orgId)
+        .single();
+      
+      setOrg(data);
+    }
+
+    fetchData();
+
+    // Set up realtime subscription for alerts
+    const subscription = supabase
+      .channel('sidebar_alerts')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'alerts',
+        filter: `organisation_id=eq.${orgId}`
+      }, () => {
+        // Re-fetch count on any alert change
+        supabase
+          .from('alerts')
+          .select('*', { count: 'exact', head: true })
+          .eq('organisation_id', orgId)
+          .eq('is_read', false)
+          .then(({ count }) => setUnreadCount(count || 0));
+      })
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [orgId]);
 
   return (
     <aside className="w-64 bg-navy-900 border-r border-navy-800 flex flex-col h-full shrink-0">
@@ -71,7 +115,7 @@ export default function Sidebar({ activePage, onNavigate, orgId }: SidebarProps)
             >
               <Icon className="w-4 h-4 shrink-0" />
               {item.label}
-              {item.id === "alerts" && unreadCount && unreadCount > 0 ? (
+              {item.id === "alerts" && unreadCount > 0 ? (
                 <span className="ml-auto bg-accent text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
                   {unreadCount > 99 ? "99+" : unreadCount}
                 </span>
@@ -81,11 +125,12 @@ export default function Sidebar({ activePage, onNavigate, orgId }: SidebarProps)
         })}
       </nav>
 
-      {/* Sign out */}
+      {/* Footer / Info */}
       <div className="p-4 border-t border-navy-800">
-        <SignOutButton />
+        <div className="text-navy-500 text-[10px] text-center">
+          FraudSense SA v1.0.0
+        </div>
       </div>
     </aside>
   );
 }
-
