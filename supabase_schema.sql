@@ -1,7 +1,11 @@
 -- Supabase Schema for FraudSense SA
+-- Run this in the Supabase SQL Editor
 
--- Organisations Table
-CREATE TABLE organisations (
+-- 1. Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 2. Organisations Table
+CREATE TABLE IF NOT EXISTS organisations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   type TEXT CHECK (type IN ('BANK', 'FINTECH', 'PAYMENT_PROCESSOR')) NOT NULL,
@@ -21,8 +25,8 @@ CREATE TABLE organisations (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- API Keys Table
-CREATE TABLE api_keys (
+-- 3. API Keys Table
+CREATE TABLE IF NOT EXISTS api_keys (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   key TEXT UNIQUE NOT NULL,
@@ -32,8 +36,8 @@ CREATE TABLE api_keys (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Transactions Table
-CREATE TABLE transactions (
+-- 4. Transactions Table
+CREATE TABLE IF NOT EXISTS transactions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organisation_id UUID REFERENCES organisations(id) ON DELETE CASCADE,
   external_id TEXT,
@@ -61,8 +65,8 @@ CREATE TABLE transactions (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Alerts Table
-CREATE TABLE alerts (
+-- 5. Alerts Table
+CREATE TABLE IF NOT EXISTS alerts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organisation_id UUID REFERENCES organisations(id) ON DELETE CASCADE,
   transaction_id UUID REFERENCES transactions(id) ON DELETE CASCADE,
@@ -75,8 +79,8 @@ CREATE TABLE alerts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Cases Table
-CREATE TABLE cases (
+-- 6. Cases Table
+CREATE TABLE IF NOT EXISTS cases (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   case_number TEXT NOT NULL,
   title TEXT NOT NULL,
@@ -89,8 +93,8 @@ CREATE TABLE cases (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Rules Table
-CREATE TABLE rules (
+-- 7. Rules Table
+CREATE TABLE IF NOT EXISTS rules (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   description TEXT NOT NULL,
@@ -105,8 +109,8 @@ CREATE TABLE rules (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Demo State Table
-CREATE TABLE demo_state (
+-- 8. Demo State Table
+CREATE TABLE IF NOT EXISTS demo_state (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organisation_id UUID REFERENCES organisations(id) ON DELETE CASCADE,
   is_running BOOLEAN DEFAULT FALSE,
@@ -115,5 +119,19 @@ CREATE TABLE demo_state (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Enable Realtime for relevant tables
-ALTER PUBLICATION supabase_realtime ADD TABLE transactions, alerts, cases;
+-- 9. Disable RLS for Public Access (Since we removed Auth)
+ALTER TABLE organisations DISABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys DISABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE alerts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE cases DISABLE ROW LEVEL SECURITY;
+ALTER TABLE rules DISABLE ROW LEVEL SECURITY;
+ALTER TABLE demo_state DISABLE ROW LEVEL SECURITY;
+
+-- 10. Enable Realtime
+ALTER PUBLICATION supabase_realtime ADD TABLE transactions, alerts, cases, organisations, rules;
+
+-- 11. Seed Initial Organisation
+INSERT INTO organisations (name, type, plan, owner_id)
+VALUES ('FraudSense SA', 'BANK', 'STARTER', 'public_user')
+ON CONFLICT DO NOTHING;
