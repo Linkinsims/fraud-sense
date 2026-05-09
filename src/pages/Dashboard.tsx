@@ -33,7 +33,6 @@ function timeAgo(dateString: string) {
   return `${Math.floor(diff / 3600000)}h ago`;
 }
 
-// Demo data generator
 const SCENARIOS = [
   { holder: "Sipho Dlamini", bank: "ABSA", amount: 15000, risk: "LOW", score: 12, flags: [] },
   { holder: "Sarah van Wyk", bank: "FNB", amount: 850, risk: "LOW", score: 5, flags: [] },
@@ -51,10 +50,12 @@ export default function Dashboard({ orgId }: Props) {
   const [loading, setLoading] = useState(true);
   const [isDemoRunning, setIsDemoRunning] = useState(false);
   const demoIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const statsRef = useRef<any>(null);
 
   const fetchDashboardData = async () => {
     const { data: orgData } = await supabase.from('organisations').select('*').eq('id', orgId).single();
     setStats(orgData);
+    statsRef.current = orgData;
 
     const { data: txData } = await supabase.from('transactions').select('*').eq('organisation_id', orgId).order('created_at', { ascending: false }).limit(15);
     setRecentTx(txData || []);
@@ -73,7 +74,11 @@ export default function Dashboard({ orgId }: Props) {
     const txSubscription = supabase
       .channel('dashboard_tx')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions', filter: `organisation_id=eq.${orgId}` }, 
-        () => fetchDashboardData()
+        (payload) => {
+          setRecentTx(prev => [payload.new, ...prev].slice(0, 15));
+          // Throttle stats updates to avoid overwhelming the UI
+          if (Math.random() > 0.8) fetchDashboardData();
+        }
       ).subscribe();
 
     return () => {
@@ -86,17 +91,19 @@ export default function Dashboard({ orgId }: Props) {
     if (isDemoRunning) {
       if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
       setIsDemoRunning(false);
-      toast.info("Demo data generation stopped");
+      toast.info("Turbo demo stopped");
     } else {
       setIsDemoRunning(true);
-      toast.success("Demo data generation started");
+      toast.success("TURBO MODE: 10 txns/sec active");
+      
+      // 100ms interval = 10 transactions per second
       demoIntervalRef.current = setInterval(async () => {
         const scenario = SCENARIOS[Math.floor(Math.random() * SCENARIOS.length)];
         const newTx = {
           organisation_id: orgId,
           account_holder: scenario.holder,
           bank_code: scenario.bank,
-          amount: scenario.amount + (Math.random() * 100),
+          amount: scenario.amount + (Math.random() * 500),
           currency: "ZAR",
           type: "PAYMENT",
           channel: "ONLINE",
@@ -108,33 +115,42 @@ export default function Dashboard({ orgId }: Props) {
           is_demo: true,
         };
 
-        const { data: tx, error } = await supabase.from('transactions').insert(newTx).select().single();
-        if (error) console.error("Demo error:", error);
-        
-        // If critical, create an alert
-        if (tx && scenario.risk === "CRITICAL") {
-          await supabase.from('alerts').insert({
-            organisation_id: orgId,
-            transaction_id: tx.id,
-            type: "FRAUD_ATTEMPT",
-            severity: "CRITICAL",
-            title: "High Risk Transaction Detected",
-            description: `Potential fraud attempt by ${scenario.holder} for ${formatZAR(newTx.amount)}`,
-          });
-        }
+        // Fire and forget to maximize throughput
+        supabase.from('transactions').insert(newTx).then(({ data: tx }) => {
+          if (tx && scenario.risk === "CRITICAL") {
+            supabase.from('alerts').insert({
+              organisation_id: orgId,
+              transaction_id: tx.id,
+              type: "FRAUD_ATTEMPT",
+              severity: "CRITICAL",
+              title: "TURBO: High Risk Detected",
+              description: `Critical attempt by ${scenario.holder} for ${formatZAR(newTx.amount)}`,
+            });
+          }
+        });
 
-        // Update org stats (simple local update simulation, real apps use DB triggers)
-        if (stats) {
-          const newStats = {
-            ...stats,
-            stats_today_total: (stats.stats_today_total || 0) + 1,
-            stats_today_volume: (stats.stats_today_volume || 0) + newTx.amount,
-            stats_flagged: (stats.stats_flagged || 0) + (scenario.risk === "HIGH" || scenario.risk === "CRITICAL" ? 1 : 0),
-            stats_critical_count: (stats.stats_critical_count || 0) + (scenario.risk === "CRITICAL" ? 1 : 0),
+        // Batch update stats locally to keep UI snappy
+        if (statsRef.current) {
+          const current = statsRef.current;
+          const updated = {
+            ...current,
+            stats_today_total: (current.stats_today_total || 0) + 1,
+            stats_today_volume: (current.stats_today_volume || 0) + newTx.amount,
+            stats_flagged: (current.stats_flagged || 0) + (scenario.risk === "HIGH" || scenario.risk === "CRITICAL" ? 1 : 0),
+            stats_critical_count: (current.stats_critical_count || 0) + (scenario.risk === "CRITICAL" ? 1 : 0),
+            stats_low: (current.stats_low || 0) + (scenario.risk === "LOW" ? 1 : 0),
+            stats_medium: (current.stats_medium || 0) + (scenario.risk === "MEDIUM" ? 1 : 0),
+            stats_high: (current.stats_high || 0) + (scenario.risk === "HIGH" ? 1 : 0),
           };
-          await supabase.from('organisations').update(newStats).eq('id', orgId);
+          statsRef.current = updated;
+          setStats(updated);
+          
+          // Sync to DB occasionally (every 20 txns) to avoid rate limits
+          if (updated.stats_today_total % 20 === 0) {
+            supabase.from('organisations').update(updated).eq('id', orgId);
+          }
         }
-      }, 3000);
+      }, 100);
     }
   };
 
@@ -154,13 +170,13 @@ export default function Dashboard({ orgId }: Props) {
         </div>
         <button
           onClick={toggleDemo}
-          className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-all ${
+          className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-semibold transition-all shadow-lg ${
             isDemoRunning 
-              ? "bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20" 
+              ? "bg-accent border border-accent text-white hover:bg-accent-hover animate-pulse" 
               : "bg-safe/10 border border-safe/20 text-safe hover:bg-safe/20"
           }`}
         >
-          {isDemoRunning ? <><Square className="w-4 h-4" /> Stop Demo</> : <><Play className="w-4 h-4" /> Start Demo</>}
+          {isDemoRunning ? <><Zap className="w-4 h-4 fill-white" /> TURBO ACTIVE</> : <><Play className="w-4 h-4" /> Start Turbo Demo</>}
         </button>
       </div>
 
